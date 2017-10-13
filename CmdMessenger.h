@@ -53,6 +53,18 @@ enum
 	kEndOfMessage,				 // Message is fully received, reached command separator
 	kProcessingArguments,			 // Message is received, arguments are being read parsed
 };
+ 
+// 16 bit CRC polynomials available in FastCRC library
+enum crc_polynomial 
+{
+  none, 
+  ccitt,
+  mcrf4xx,
+  kermit,
+  modbus,
+  xmodem,
+  x25       
+}; 
 
 #define white_space(c) ((c) == ' ' || (c) == '\t')
 #define valid_digit(c) ((c) >= '0' && (c) <= '9')
@@ -84,23 +96,25 @@ private:
 	char command_separator;           // Character indicating end of command (default: ';')
 	char field_separator;				// Character indicating end of argument (default: ',')
 	char escape_character;		    // Character indicating escaping of special chars
+   bool check_value;             // appending CRC check value at the end of sent command
+   crc_polynomial crc_poly;
   
-  // crate pointers to differnent separators for CRC check value generation  
- const uint8_t *command_separator_uint8_tPointer = (const uint8_t *)(const void *)&command_separator;
- const uint8_t *field_separator_uint8_tPointer = (const uint8_t *)(const void *)&field_separator;
- const uint8_t *escape_character_uint8_tPointer = (const uint8_t *)(const void *)&escape_character;       
+   // crate pointers to differnent separators for CRC check value generation  
+   const uint8_t *command_separator_uint8_tPointer = (const uint8_t *)(const void *)&command_separator;
+   const uint8_t *field_separator_uint8_tPointer = (const uint8_t *)(const void *)&field_separator;
+   const uint8_t *escape_character_uint8_tPointer = (const uint8_t *)(const void *)&escape_character;       
     
 
 	messengerCallbackFunction default_callback;            // default callback function  
 	messengerCallbackFunction callbackList[MAXCALLBACKS];  // list of attached callback functions 
     
- FastCRC16 _CRC;  // CRC instance
- uint16_t _check_value; // current check value
+   FastCRC16 _CRC;  // CRC instance
+   uint16_t _check_value; // current check value
 
 
 	// **** Initialize ****
 
-	void init(Stream & comms, const char fld_separator, const char cmd_separator, const char esc_character);
+	void init(Stream & comms, const crc_polynomial crc, const char fld_separator, const char cmd_separator, const char esc_character);
 	void reset();
 
 	// **** Command processing ****
@@ -127,6 +141,11 @@ private:
 			bytePointer++;
 		}
 	}
+        
+  uint16_t calculate_crc(const uint8_t *data, const uint16_t datalen);
+  uint16_t update_crc(const uint8_t *data, const uint16_t datalen);       
+        
+        
 
 	// **** Command receiving ****
 
@@ -177,9 +196,11 @@ public:
 
 	// **** Initialization ****
 
-	CmdMessenger(Stream & comms, const char fld_separator = ',',
+	CmdMessenger(Stream & comms, const crc_polynomial crc = none,
+     const char fld_separator = ',',
 		const char cmd_separator = ';',
 		const char esc_character = '/');
+     
 
 	void printLfCr(bool addNewLine = true);
 	void attach(messengerCallbackFunction newFunction);
@@ -275,7 +296,7 @@ public:
 	{
 		if (startCommand) {
 			comms->print(field_separator);        
-         _check_value = _CRC.ccitt_upd(field_separator_uint8_tPointer, 1); // get check value including field separator
+         _check_value = update_crc(field_separator_uint8_tPointer, 1); // get check value including field separator
 			writeBin(arg); // check value updated in writeBin()
 		}
 	}

@@ -56,15 +56,15 @@ extern "C" {
 /**
  * CmdMessenger constructor
  */
-CmdMessenger::CmdMessenger(Stream &ccomms, const char fld_separator, const char cmd_separator, const char esc_character)
+CmdMessenger::CmdMessenger(Stream &ccomms, const crc_polynomial crc, const char fld_separator, const char cmd_separator, const char esc_character)
 {
-	init(ccomms, fld_separator, cmd_separator, esc_character);
+	init(ccomms, crc, fld_separator, cmd_separator, esc_character);
 }
 
 /**
  * Enables printing newline after a sent command
  */
-void CmdMessenger::init(Stream &ccomms, const char fld_separator, const char cmd_separator, const char esc_character)
+void CmdMessenger::init(Stream &ccomms, const crc_polynomial crc, const char fld_separator, const char cmd_separator, const char esc_character)
 {
 	default_callback = NULL;
 	comms = &ccomms;
@@ -72,6 +72,7 @@ void CmdMessenger::init(Stream &ccomms, const char fld_separator, const char cmd
 	field_separator = fld_separator;
 	command_separator = cmd_separator;
 	escape_character = esc_character;
+   crc_poly = crc;
 	bufferLength = MESSENGERBUFFERSIZE;
 	bufferLastIndex = MESSENGERBUFFERSIZE - 1;
 	reset();
@@ -282,7 +283,7 @@ void CmdMessenger::sendCmdStart(byte cmdId)
 		startCommand = true;
 		pauseProcessing = true;
 		comms->print(cmdId);
-      _check_value = _CRC.ccitt(&cmdId, 1); // get check value from first byte encoding the command function      
+      _check_value = calculate_crc(&cmdId, 1); // get check value from first byte encoding the command function      
 	}
 }
 
@@ -293,7 +294,7 @@ void CmdMessenger::sendCmdEscArg(char* arg)
 {
 	if (startCommand) {
 		comms->print(field_separator);
-      _check_value = _CRC.ccitt_upd(field_separator_uint8_tPointer, 1); // get check value including field separator     
+      _check_value = update_crc(field_separator_uint8_tPointer, 1); // get check value including field separator     
 		printEsc(arg);
 	}
 }
@@ -313,10 +314,10 @@ void CmdMessenger::sendCmdfArg(char *fmt, ...)
 		va_end(args);
 
 		comms->print(field_separator);
-      _check_value = _CRC.ccitt_upd(field_separator_uint8_tPointer, 1);
+      _check_value = update_crc(field_separator_uint8_tPointer, 1);
 		comms->print(msg);
    const uint8_t *msg_uint8_tPointer = (const uint8_t *)(const void *)msg;     
-   _check_value = _CRC.ccitt_upd(msg_uint8_tPointer, sizeof(msg));
+   _check_value = update_crc(msg_uint8_tPointer, sizeof(msg));
 	}
 }
 
@@ -329,7 +330,7 @@ void CmdMessenger::sendCmdSciArg(double arg, unsigned int n)
 	if (startCommand)
 	{
 		comms->print(field_separator);
-      _check_value = _CRC.ccitt_upd(field_separator_uint8_tPointer, 1);
+      _check_value = update_crc(field_separator_uint8_tPointer, 1);
 		printSci(arg, n);
 	}
 }
@@ -341,9 +342,12 @@ bool CmdMessenger::sendCmdEnd(bool reqAc, byte ackCmdId, unsigned int timeout)
 {
 	bool ackReply = false;
 	if (startCommand) {
-    // add another filed with the check value
-   comms->print(field_separator);
-   comms->print(_check_value);
+     if (crc_poly!=none) {
+       // add another filed with the check value
+       comms->print(field_separator);
+       comms->print(_check_value);      
+    } 
+
 //   writeBin(_check_value);
    // add command separator
    comms->print(command_separator);
@@ -381,6 +385,55 @@ bool CmdMessenger::sendCmd(byte cmdId)
 	}
 	return false;
 }
+    
+/**
+ * calculate the CRC check value
+ */    
+uint16_t CmdMessenger::calculate_crc(const uint8_t *data, const uint16_t datalen)
+{
+   switch(crc_poly)
+   {
+    case ccitt:
+      return _CRC.ccitt(data, datalen);
+    case mcrf4xx:
+      return _CRC.mcrf4xx(data, datalen);
+    case kermit:
+      return _CRC.kermit(data, datalen); 
+    case modbus:
+      return _CRC.modbus(data, datalen); 
+    case xmodem:
+      return _CRC.xmodem(data, datalen);
+    case x25:
+      return _CRC.x25(data, datalen);
+    default:
+      return 0;   
+    }
+ }
+
+/**
+ * update CRC check value
+ */ 
+uint16_t CmdMessenger::update_crc(const uint8_t *data, const uint16_t datalen)
+{
+   switch(crc_poly)
+   {
+    case ccitt:
+      return _CRC.ccitt_upd(data, datalen);
+    case mcrf4xx:
+      return _CRC.mcrf4xx_upd(data, datalen);
+    case kermit:
+      return _CRC.kermit_upd(data, datalen); 
+    case modbus:
+      return _CRC.modbus_upd(data, datalen); 
+    case xmodem:
+      return _CRC.xmodem_upd(data, datalen);
+    case x25:
+      return _CRC.x25_upd(data, datalen);
+    default:
+      return 0;   
+    }
+ }    
+    
 
 // **** Command receiving ****
 
@@ -628,18 +681,18 @@ void CmdMessenger::printEsc(char str)
 {
 	if (str == field_separator || str == command_separator || str == escape_character || str == '\0') {
 		comms->print(escape_character);
-      _check_value = _CRC.ccitt_upd(escape_character_uint8_tPointer, 1); // update check value       
+      _check_value = update_crc(escape_character_uint8_tPointer, 1); // update check value       
 	}
 	comms->print(str);
   const uint8_t *str_uint8_tPointer = (const uint8_t *)(const void *)&str;  
-  _check_value = _CRC.ccitt_upd(str_uint8_tPointer, 1); // update check value  
+  _check_value = update_crc(str_uint8_tPointer, 1); // update check value  
 }
 
 void CmdMessenger::printByte(char str)
 {
   comms->print(str);
   const uint8_t *str_uint8_tPointer = (const uint8_t *)(const void *)&str;  
-  _check_value = _CRC.ccitt_upd(str_uint8_tPointer, 1); // update check value 
+  _check_value = update_crc(str_uint8_tPointer, 1); // update check value 
 }
 
 /**
