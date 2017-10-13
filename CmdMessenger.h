@@ -26,6 +26,7 @@
 #define CmdMessenger_h
 
 #include <inttypes.h>
+#include <FastCRC.h>
 #if ARDUINO >= 100
 #include <Arduino.h> 
 #else
@@ -83,9 +84,18 @@ private:
 	char command_separator;           // Character indicating end of command (default: ';')
 	char field_separator;				// Character indicating end of argument (default: ',')
 	char escape_character;		    // Character indicating escaping of special chars
+  
+  // crate pointers to differnent separators for CRC check value generation  
+ const uint8_t *command_separator_uint8_tPointer = (const uint8_t *)(const void *)&command_separator;
+ const uint8_t *field_separator_uint8_tPointer = (const uint8_t *)(const void *)&field_separator;
+ const uint8_t *escape_character_uint8_tPointer = (const uint8_t *)(const void *)&escape_character;       
+    
 
 	messengerCallbackFunction default_callback;            // default callback function  
 	messengerCallbackFunction callbackList[MAXCALLBACKS];  // list of attached callback functions 
+    
+ FastCRC16 _CRC;  // CRC instance
+ uint16_t _check_value; // current check value
 
 
 	// **** Initialize ****
@@ -111,7 +121,9 @@ private:
 		const byte *bytePointer = (const byte *)(const void *)&value;
 		for (unsigned int i = 0; i < sizeof(value); i++)
 		{
-			printEsc(*bytePointer);
+    	// I think we should not call printEsc here because it randomly adds additional '/'s	
+//      printEsc(*bytePointer); // but printEsc() expects a signed char value??
+       printByte(*bytePointer);
 			bytePointer++;
 		}
 	}
@@ -157,6 +169,7 @@ private:
 
 	void printEsc(char *str);
 	void printEsc(char str);
+   void printByte(char str);
 
 public:
 
@@ -261,8 +274,9 @@ public:
 	template < class T > void sendCmdBinArg(T arg)
 	{
 		if (startCommand) {
-			comms->print(field_separator);
-			writeBin(arg);
+			comms->print(field_separator);        
+         _check_value = _CRC.ccitt_upd(field_separator_uint8_tPointer, 1); // get check value including field separator
+			writeBin(arg); // check value updated in writeBin()
 		}
 	}
 
