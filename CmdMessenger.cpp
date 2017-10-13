@@ -47,6 +47,7 @@ extern "C" {
 }
 #include <stdio.h>
 #include <CmdMessenger.h>
+#include <FastCRC.h>
 
 #define _CMDMESSENGER_VERSION 3_6 // software version of this library
 
@@ -281,6 +282,7 @@ void CmdMessenger::sendCmdStart(byte cmdId)
 		startCommand = true;
 		pauseProcessing = true;
 		comms->print(cmdId);
+      _check_value = _CRC.ccitt(&cmdId, 1); // get check value from first byte encoding the command function      
 	}
 }
 
@@ -291,6 +293,7 @@ void CmdMessenger::sendCmdEscArg(char* arg)
 {
 	if (startCommand) {
 		comms->print(field_separator);
+      _check_value = _CRC.ccitt_upd(field_separator_uint8_tPointer, 1); // get check value including field separator     
 		printEsc(arg);
 	}
 }
@@ -310,7 +313,10 @@ void CmdMessenger::sendCmdfArg(char *fmt, ...)
 		va_end(args);
 
 		comms->print(field_separator);
+      _check_value = _CRC.ccitt_upd(field_separator_uint8_tPointer, 1);
 		comms->print(msg);
+   const uint8_t *msg_uint8_tPointer = (const uint8_t *)(const void *)msg;     
+   _check_value = _CRC.ccitt_upd(msg_uint8_tPointer, sizeof(msg));
 	}
 }
 
@@ -323,6 +329,7 @@ void CmdMessenger::sendCmdSciArg(double arg, unsigned int n)
 	if (startCommand)
 	{
 		comms->print(field_separator);
+      _check_value = _CRC.ccitt_upd(field_separator_uint8_tPointer, 1);
 		printSci(arg, n);
 	}
 }
@@ -334,7 +341,12 @@ bool CmdMessenger::sendCmdEnd(bool reqAc, byte ackCmdId, unsigned int timeout)
 {
 	bool ackReply = false;
 	if (startCommand) {
-		comms->print(command_separator);
+    // add another filed with the check value
+   comms->print(field_separator);
+   comms->print(_check_value);
+//   writeBin(_check_value);
+   // add command separator
+   comms->print(command_separator);
 		if (print_newlines)
 			comms->println(); // should append BOTH \r\n
 		if (reqAc) {
@@ -616,8 +628,18 @@ void CmdMessenger::printEsc(char str)
 {
 	if (str == field_separator || str == command_separator || str == escape_character || str == '\0') {
 		comms->print(escape_character);
+      _check_value = _CRC.ccitt_upd(escape_character_uint8_tPointer, 1); // update check value       
 	}
 	comms->print(str);
+  const uint8_t *str_uint8_tPointer = (const uint8_t *)(const void *)&str;  
+  _check_value = _CRC.ccitt_upd(str_uint8_tPointer, 1); // update check value  
+}
+
+void CmdMessenger::printByte(char str)
+{
+  comms->print(str);
+  const uint8_t *str_uint8_tPointer = (const uint8_t *)(const void *)&str;  
+  _check_value = _CRC.ccitt_upd(str_uint8_tPointer, 1); // update check value 
 }
 
 /**
@@ -675,4 +697,5 @@ void CmdMessenger::printSci(double f, unsigned int digits)
 	char output[16];
 	sprintf(output, format, whole, part, exponent);
 	comms->print(output);
+// _check_value = _CRC.ccitt_upd(output, sizeof(output)); // update check value  
 }
