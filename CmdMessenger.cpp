@@ -345,10 +345,11 @@ bool CmdMessenger::sendCmdEnd(bool reqAc, byte ackCmdId, unsigned int timeout)
      if (crc_poly!=none) {
        // add another filed with the check value
        comms->print(field_separator);
-       comms->print(_check_value);      
+//       comms->print(_check_value);
+       writeCheckValue(_check_value);
     } 
 
-//   writeBin(_check_value);
+
    // add command separator
    comms->print(command_separator);
 		if (print_newlines)
@@ -681,19 +682,19 @@ void CmdMessenger::printEsc(char str)
 {
 	if (str == field_separator || str == command_separator || str == escape_character || str == '\0') {
 		comms->print(escape_character);
-      _check_value = update_crc(escape_character_uint8_tPointer, 1); // update check value       
+//      _check_value = update_crc(escape_character_uint8_tPointer, 1); // update check value       
 	}
 	comms->print(str);
-  const uint8_t *str_uint8_tPointer = (const uint8_t *)(const void *)&str;  
-  _check_value = update_crc(str_uint8_tPointer, 1); // update check value  
+//  const uint8_t *str_uint8_tPointer = (const uint8_t *)(const void *)&str;  
+//  _check_value = update_crc(str_uint8_tPointer, 1); // update check value  
 }
 
-void CmdMessenger::printByte(char str)
-{
-  comms->print(str);
-  const uint8_t *str_uint8_tPointer = (const uint8_t *)(const void *)&str;  
-  _check_value = update_crc(str_uint8_tPointer, 1); // update check value 
-}
+//void CmdMessenger::printByte(char str)
+//{
+//  comms->print(str);
+//}
+
+
 
 /**
  * Print float and double in scientific format

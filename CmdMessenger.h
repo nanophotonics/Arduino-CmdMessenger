@@ -131,16 +131,28 @@ private:
 	 */
 	template < class T >
 	void writeBin(const T & value)
-	{
-		const byte *bytePointer = (const byte *)(const void *)&value;
+	{  
+      const byte *bytePointer = (const byte *)(const void *)&value;
 		for (unsigned int i = 0; i < sizeof(value); i++)
 		{
-    	// I think we should not call printEsc here because it randomly adds additional '/'s	
-//      printEsc(*bytePointer); // but printEsc() expects a signed char value??
-       printByte(*bytePointer);
-			bytePointer++;
+      printEsc(*bytePointer);
+//       printByte(*bytePointer); 
+       _check_value = update_crc(bytePointer, 1); // update check value 
+		 bytePointer++;
 		}
 	}
+        
+	template < class T >
+	void writeCheckValue(const T & value)
+	{ 
+      const byte *bytePointer = (const byte *)(const void *)&value;
+		for (unsigned int i = 0; i < sizeof(value); i++)
+		{
+        	printEsc(*bytePointer); 
+//         printByte(*bytePointer); 
+    		bytePointer++;
+		}  
+   }
         
   uint16_t calculate_crc(const uint8_t *data, const uint16_t datalen);
   uint16_t update_crc(const uint8_t *data, const uint16_t datalen);       
@@ -188,7 +200,8 @@ private:
 
 	void printEsc(char *str);
 	void printEsc(char str);
-   void printByte(char str);
+//   void printByte(char str);
+
 
 public:
 
