@@ -41,6 +41,7 @@ compareStringArg	KEYWORD2
 readBinArg	KEYWORD2
 unescape	KEYWORD2
 printSci	KEYWORD2
+sendBufferedCmd	KEYWORD2
 
 
 #######################################

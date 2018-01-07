@@ -72,7 +72,7 @@ void CmdMessenger::init(Stream &ccomms, const crc_polynomial crc, const char fld
 	field_separator = fld_separator;
 	command_separator = cmd_separator;
 	escape_character = esc_character;
-   crc_poly = crc;
+    crc_poly = crc;
 	bufferLength = MESSENGERBUFFERSIZE;
 	bufferLastIndex = MESSENGERBUFFERSIZE - 1;
 	reset();
@@ -82,6 +82,11 @@ void CmdMessenger::init(Stream &ccomms, const crc_polynomial crc, const char fld
 		callbackList[i] = NULL;
 
 	pauseProcessing = false;
+	
+	// initialize buffer for sending commands
+	send_buffer = (byte*)malloc(sizeof(byte)*SENDBUFFERSIZE);
+	send_buffer_position = 0;
+	send_buffer_length = 0;
 }
 
 /**
@@ -272,20 +277,65 @@ uint8_t CmdMessenger::commandID()
 	return lastCommandId;
 }
 
+/**
+ * Append byte to send  buffer
+ */
+bool CmdMessenger::appendToSendBuffer(byte data) {
+	if(send_buffer_length < SENDBUFFERSIZE){
+		send_buffer[(send_buffer_position+send_buffer_length) % SENDBUFFERSIZE] = data;
+		send_buffer_length++;
+		return true;
+	}
+	return false;
+}
+
+/**
+ * get a byte from the send buffer
+ */
+byte CmdMessenger::getByteFromSendBuffer() {
+	byte b = 0;
+	if(send_buffer_length > 0){
+		b = send_buffer[send_buffer_position];
+		send_buffer_position = (send_buffer_position+1)%SENDBUFFERSIZE;
+		send_buffer_length--;
+	}
+	return b;
+}
+
+
+/**
+ * get current size of send buffer in bytes
+ */
+uint32_t CmdMessenger::getSendBufferSize() {
+	return send_buffer_length;
+}
+
+
+
 // ****  Command sending ****
 
 /**
  * Send start of command. This makes it easy to send multiple arguments per command
  */
-void CmdMessenger::sendCmdStart(byte cmdId)
+void CmdMessenger::sendCmdStart(byte cmdId, bool buffered)
 {
 	if (!startCommand) {
 		startCommand = true;
 		pauseProcessing = true;
-		comms->print(cmdId);
-      _check_value = calculate_crc(&cmdId, 1); // get check value from first byte encoding the command function      
+		if(buffered) {
+//			appendToSendBuffer(cmdId); // stores and later sends cmdId as byte, that is, as a value 0..255
+			// the following lines are necessary to save and later send cmdId as ASCII characters
+			char tmp [4];
+			sprintf(tmp,"%03i",cmdId);
+			for(int i=0;i<3;i++) {
+				if(tmp[i]!='0' || i==2) appendToSendBuffer(tmp[i]); 
+			}
+		}
+		else comms->print(cmdId);
+		_check_value = calculate_crc(&cmdId, 1); // get check value from first byte encoding the command function      
 	}
 }
+
 
 /**
  * Send an escaped command argument
@@ -338,25 +388,31 @@ void CmdMessenger::sendCmdSciArg(double arg, unsigned int n)
 /**
  * Send end of command
  */
-bool CmdMessenger::sendCmdEnd(bool reqAc, byte ackCmdId, unsigned int timeout)
+bool CmdMessenger::sendCmdEnd(bool buffered, bool reqAc, byte ackCmdId, unsigned int timeout)
 {
 	bool ackReply = false;
 	if (startCommand) {
-     if (crc_poly!=none) {
-       // add another filed with the check value
-       comms->print(field_separator);
-//       comms->print(_check_value);
-       writeCheckValue(_check_value);
-    } 
+		if (crc_poly!=none) {
+			// add another field with the check value
+			if(buffered) appendToSendBuffer(field_separator_byte);
+			else comms->print(field_separator);
+			writeCheckValue(_check_value, buffered);
+		} 
 
-
-   // add command separator
-   comms->print(command_separator);
-		if (print_newlines)
-			comms->println(); // should append BOTH \r\n
+		// add command separator
+		if (buffered) {
+			appendToSendBuffer((byte)command_separator);			
+//			comms->println(getSendBufferSize());
+//			sendBufferedCmd();
+		}
+		else {
+			comms->print(command_separator);
+			if (print_newlines)
+				comms->println(); // should append BOTH \r\n
+		}
 		if (reqAc) {
 			ackReply = blockedTillReply(timeout, ackCmdId);
-		}
+		}		
 	}
 	pauseProcessing = false;
 	startCommand = false;
@@ -366,11 +422,11 @@ bool CmdMessenger::sendCmdEnd(bool reqAc, byte ackCmdId, unsigned int timeout)
 /**
  * Send a command without arguments, with acknowledge
  */
-bool CmdMessenger::sendCmd(byte cmdId, bool reqAc, byte ackCmdId)
+bool CmdMessenger::sendCmd(byte cmdId, bool buffered, bool reqAc, byte ackCmdId)
 {
 	if (!startCommand) {
-		sendCmdStart(cmdId);
-		return sendCmdEnd(reqAc, ackCmdId, DEFAULT_TIMEOUT);
+		sendCmdStart(cmdId, buffered);
+		return sendCmdEnd(buffered, reqAc, ackCmdId, DEFAULT_TIMEOUT);
 	}
 	return false;
 }
@@ -378,15 +434,27 @@ bool CmdMessenger::sendCmd(byte cmdId, bool reqAc, byte ackCmdId)
 /**
  * Send a command without arguments, without acknowledge
  */
-bool CmdMessenger::sendCmd(byte cmdId)
+bool CmdMessenger::sendCmd(byte cmdId, bool buffered)
 {
 	if (!startCommand) {
-		sendCmdStart(cmdId);
-		return sendCmdEnd(false, 1, DEFAULT_TIMEOUT);
+		sendCmdStart(cmdId, buffered);
+		return sendCmdEnd(buffered, false, 1, DEFAULT_TIMEOUT);
 	}
 	return false;
 }
-    
+
+/**
+ * send commmands in buffer
+ */   
+void CmdMessenger::sendBufferedCmd() {
+//	comms->println("sendBufferdCmd called");
+//	comms->println(getSendBufferSize());
+	while(getSendBufferSize() > 0) {
+		comms->print((char)getByteFromSendBuffer());
+	}
+	}
+
+  
 /**
  * calculate the CRC check value
  */    
@@ -668,7 +736,7 @@ bool CmdMessenger::isEscaped(char *currChar, const char escapeChar, char *lastCh
 /**
  * Escape and print a string
  */
-void CmdMessenger::printEsc(char *str)
+void CmdMessenger::printEsc(char *str, bool buffered)
 {
 	while (*str != '\0') {
 		printEsc(*str++);
@@ -678,21 +746,18 @@ void CmdMessenger::printEsc(char *str)
 /**
  * Escape and print a character
  */
-void CmdMessenger::printEsc(char str)
+void CmdMessenger::printEsc(char str, bool buffered)
 {
 	if (str == field_separator || str == command_separator || str == escape_character || str == '\0') {
-		comms->print(escape_character);
-//      _check_value = update_crc(escape_character_uint8_tPointer, 1); // update check value       
+		if (buffered) appendToSendBuffer((byte)escape_character);
+		else comms->print(escape_character);      
 	}
-	comms->print(str);
+	if (buffered) appendToSendBuffer(str);
+	else comms->print(str);
 //  const uint8_t *str_uint8_tPointer = (const uint8_t *)(const void *)&str;  
 //  _check_value = update_crc(str_uint8_tPointer, 1); // update check value  
 }
 
-//void CmdMessenger::printByte(char str)
-//{
-//  comms->print(str);
-//}
 
 
 

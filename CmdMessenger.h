@@ -45,6 +45,7 @@ extern "C"
 #define MESSENGERBUFFERSIZE 64   // The length of the commandbuffer  (default: 64)
 #define MAXSTREAMBUFFERSIZE 512  // The length of the streambuffer   (default: 64)
 #define DEFAULT_TIMEOUT     5000 // Time out on unanswered messages. (default: 5s)
+#define SENDBUFFERSIZE      512  // size of send buffer in bytes
 
 // Message States
 enum
@@ -96,20 +97,37 @@ private:
 	char command_separator;           // Character indicating end of command (default: ';')
 	char field_separator;				// Character indicating end of argument (default: ',')
 	char escape_character;		    // Character indicating escaping of special chars
-   bool check_value;             // appending CRC check value at the end of sent command
-   crc_polynomial crc_poly;
+	
+	// buffer for (binary) commands that should be sent later
+	uint32_t send_buffer_position;
+	uint32_t send_buffer_length;
+	byte* send_buffer;	
+	
+	bool appendToSendBuffer(byte data);
+	byte getByteFromSendBuffer();
+	uint32_t getSendBufferSize();
+
+	
+	// CRC check value at the end of sent command
+	bool check_value;             
+    crc_polynomial crc_poly;
+	
+	uint8_t field_separator_byte = (uint8_t)field_separator;
+	uint8_t escape_character_byte = (uint8_t)escape_character;
+	uint8_t command_separator_byte = (uint8_t)command_separator;
   
-   // crate pointers to differnent separators for CRC check value generation  
-   const uint8_t *command_separator_uint8_tPointer = (const uint8_t *)(const void *)&command_separator;
-   const uint8_t *field_separator_uint8_tPointer = (const uint8_t *)(const void *)&field_separator;
-   const uint8_t *escape_character_uint8_tPointer = (const uint8_t *)(const void *)&escape_character;       
+  
+	// pointers to differnent separators for CRC check value generation  
+	const uint8_t *command_separator_uint8_tPointer = (const uint8_t *)(const void *)&command_separator;
+	const uint8_t *field_separator_uint8_tPointer = (const uint8_t *)(const void *)&field_separator;
+	const uint8_t *escape_character_uint8_tPointer = (const uint8_t *)(const void *)&escape_character;       
     
 
 	messengerCallbackFunction default_callback;            // default callback function  
 	messengerCallbackFunction callbackList[MAXCALLBACKS];  // list of attached callback functions 
     
-   FastCRC16 _CRC;  // CRC instance
-   uint16_t _check_value; // current check value
+    FastCRC16 _CRC;  // CRC instance
+    uint16_t _check_value; // current check value
 
 
 	// **** Initialize ****
@@ -130,32 +148,30 @@ private:
 	 * Print variable of type T binary in binary format
 	 */
 	template < class T >
-	void writeBin(const T & value)
+	void writeBin(const T & value, bool buffered)
 	{  
       const byte *bytePointer = (const byte *)(const void *)&value;
 		for (unsigned int i = 0; i < sizeof(value); i++)
 		{
-      printEsc(*bytePointer);
-//       printByte(*bytePointer); 
-       _check_value = update_crc(bytePointer, 1); // update check value 
-		 bytePointer++;
+			printEsc(*bytePointer, buffered);
+			_check_value = update_crc(bytePointer, 1); // update check value 
+			bytePointer++;
 		}
 	}
         
 	template < class T >
-	void writeCheckValue(const T & value)
+	void writeCheckValue(const T & value, bool buffered=false)
 	{ 
       const byte *bytePointer = (const byte *)(const void *)&value;
 		for (unsigned int i = 0; i < sizeof(value); i++)
 		{
-        	printEsc(*bytePointer); 
-//         printByte(*bytePointer); 
+        	printEsc(*bytePointer, buffered); 
     		bytePointer++;
 		}  
    }
         
-  uint16_t calculate_crc(const uint8_t *data, const uint16_t datalen);
-  uint16_t update_crc(const uint8_t *data, const uint16_t datalen);       
+	uint16_t calculate_crc(const uint8_t *data, const uint16_t datalen);
+	uint16_t update_crc(const uint8_t *data, const uint16_t datalen);       
         
         
 
@@ -198,8 +214,8 @@ private:
 	char *split_r(char *str, const char delim, char **nextp);
 	bool isEscaped(char *currChar, const char escapeChar, char *lastChar);
 
-	void printEsc(char *str);
-	void printEsc(char str);
+	void printEsc(char *str, bool buffered=false);
+	void printEsc(char str, bool buffered=false);
 //   void printByte(char str);
 
 
@@ -218,6 +234,7 @@ public:
 	void printLfCr(bool addNewLine = true);
 	void attach(messengerCallbackFunction newFunction);
 	void attach(byte msgId, messengerCallbackFunction newFunction);
+	
 
 	// **** Command processing ****
 
@@ -228,19 +245,20 @@ public:
 	uint8_t commandID();
 
 	// ****  Command sending ****
+	
 
 	/**
 	 * Send a command with a single argument of any type
 	 * Note that the argument is sent as string
 	 */
 	template < class T >
-	bool sendCmd(byte cmdId, T arg, bool reqAc = false, byte ackCmdId = 1,
+	bool sendCmd(byte cmdId, T arg, bool buffered=false, bool reqAc = false, byte ackCmdId = 1,
 		unsigned int timeout = DEFAULT_TIMEOUT)
 	{
 		if (!startCommand) {
-			sendCmdStart(cmdId);
-			sendCmdArg(arg);
-			return sendCmdEnd(reqAc, ackCmdId, timeout);
+			sendCmdStart(cmdId, buffered);
+			sendCmdArg(arg, buffered);
+			return sendCmdEnd(buffered, reqAc, ackCmdId, timeout);
 		}
 		return false;
 	}
@@ -250,35 +268,50 @@ public:
 	 * Note that the argument is sent in binary format
 	 */
 	template < class T >
-	bool sendBinCmd(byte cmdId, T arg, bool reqAc = false, byte ackCmdId = 1,
+	bool sendBinCmd(byte cmdId, T arg, bool buffered = false, bool reqAc = false, byte ackCmdId = 1,
 		unsigned int timeout = DEFAULT_TIMEOUT)
 	{
 		if (!startCommand) {
-			sendCmdStart(cmdId);
-			sendCmdBinArg(arg);
-			return sendCmdEnd(reqAc, ackCmdId, timeout);
+			sendCmdStart(cmdId, buffered);
+			sendCmdBinArg(arg, buffered);
+			return sendCmdEnd(buffered, reqAc, ackCmdId, timeout);
 		}
 		return false;
 	}
 
-	bool sendCmd(byte cmdId);
-	bool sendCmd(byte cmdId, bool reqAc, byte ackCmdId);
+	bool sendCmd(byte cmdId, bool buffered=false);
+	bool sendCmd(byte cmdId, bool buffered=false, bool reqAc=false, byte ackCmdId=1);
 	// **** Command sending with multiple arguments ****
 
-	void sendCmdStart(byte cmdId);
+	void sendCmdStart(byte cmdId, bool buffered=false);
 	void sendCmdEscArg(char *arg);
 	void sendCmdfArg(char *fmt, ...);
-	bool sendCmdEnd(bool reqAc = false, byte ackCmdId = 1, unsigned int timeout = DEFAULT_TIMEOUT);
+	bool sendCmdEnd(bool buffered = false, bool reqAc = false, byte ackCmdId = 1,
+					unsigned int timeout = DEFAULT_TIMEOUT);
 
 	/**
 	 * Send a single argument as string
 	 *  Note that this will only succeed if a sendCmdStart has been issued first
 	 */
-	template < class T > void sendCmdArg(T arg)
+	template < class T > void sendCmdArg(T arg, bool buffered=false)
 	{
 		if (startCommand) {
-			comms->print(field_separator);
-			comms->print(arg);
+/*			if(buffered) {
+				appendToSendBuffer((byte)field_separator);
+				
+				
+				const byte *bytePointer = (const byte *)(const void *)&arg;
+				for (unsigned int i = 0; i < sizeof(*arg); i++) {
+					appendToSendBuffer(*bytePointer);
+					appendToSendBuffer(95);
+					bytePointer++;					
+				}
+					
+			} 
+			else { */
+				comms->print(field_separator);
+				comms->print(arg);
+			//}
 		}
 	}
 
@@ -286,7 +319,7 @@ public:
 	 * Send a single argument as string with custom accuracy
 	 *  Note that this will only succeed if a sendCmdStart has been issued first
 	 */
-	template < class T > void sendCmdArg(T arg, unsigned int n)
+	template < class T > void sendCmdArg(T arg, unsigned int n, bool buffered=false)
 	{
 		if (startCommand) {
 			comms->print(field_separator);
@@ -305,14 +338,22 @@ public:
 	 * Send a single argument in binary format
 	 *  Note that this will only succeed if a sendCmdStart has been issued first
 	 */
-	template < class T > void sendCmdBinArg(T arg)
+	template < class T > void sendCmdBinArg(T arg, bool buffered=false)
 	{
 		if (startCommand) {
-			comms->print(field_separator);        
-         _check_value = update_crc(field_separator_uint8_tPointer, 1); // get check value including field separator
-			writeBin(arg); // check value updated in writeBin()
+			_check_value = update_crc(field_separator_uint8_tPointer, 1); // get check value including field separator
+			if (buffered) appendToSendBuffer((byte)field_separator); 
+			else comms->print(field_separator);        
+			writeBin(arg, buffered); // check value updated in writeBin()
+			
 		}
 	}
+	
+	/**
+	 * Send all buffered commands 
+	 */
+	void sendBufferedCmd();
+	
 
 	// **** Command receiving ****
 	bool readBoolArg();
